@@ -7,6 +7,8 @@ public class QuestionMessage {
     private Question question;
     private String p1Id;
     private String p2Id;
+    private String p1Name;
+    private String p2Name;
 
     // Default constructor
     public QuestionMessage() {}
@@ -39,6 +41,12 @@ public class QuestionMessage {
 
     public String getP2Id() { return p2Id; }
     public void setP2Id(String p2Id) { this.p2Id = p2Id; }
+
+    public String getP1Name() { return p1Name; }
+    public void setP1Name(String p1Name) { this.p1Name = p1Name; }
+
+    public String getP2Name() { return p2Name; }
+    public void setP2Name(String p2Name) { this.p2Name = p2Name; }
 
     @Override
     public String toString() {

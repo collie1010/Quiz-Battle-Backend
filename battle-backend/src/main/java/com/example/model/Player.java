@@ -2,6 +2,7 @@ package com.example.model;
 
 public class Player {
     private String id;
+    private String name;
     private int score = 0;
     private boolean answered = false;
 
@@ -20,6 +21,14 @@ public class Player {
 
     public void setId(String id) {
         this.id = id;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
     }
 
     public int getScore() {

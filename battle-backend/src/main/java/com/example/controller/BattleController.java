@@ -41,16 +41,17 @@ public class BattleController {
     @MessageMapping("/match")
     public void match(JoinMessage msg) { // 這裡借用 JoinMessage 拿 playerId 即可
         String myId = msg.getPlayerId();
+        String myName = msg.getPlayerName();
         
         // 1. 嘗試從隊列中抓一個對手
-        String opponentId = matchmakingService.tryMatch();
+        MatchmakingService.QueuedPlayer opponent = matchmakingService.tryMatch();
 
-        if (opponentId != null && opponentId.equals(myId)) {
-            matchmakingService.addToQueue(myId);
+        if (opponent != null && opponent.equals(myId)) {
+            matchmakingService.addToQueue(myId, myName);
             return;
         }
 
-        if (opponentId != null) {
+        if (opponent != null) {
             // ⭐ 配對成功！ (隊列裡有人)
             
             // A. 產生隨機房間 ID
@@ -58,8 +59,8 @@ public class BattleController {
             
             // B. 建立房間並把兩人都加入
             Room room = roomService.getOrCreate(newRoomId);
-            roomService.join(room, opponentId); // 先加入對手 (P1)
-            roomService.join(room, myId);       // 再加入自己 (P2)
+            roomService.join(room, opponent.id, opponent.name); // 先加入對手 (P1)
+            roomService.join(room, myId, myName);       // 再加入自己 (P2)
 
             // ⭐ 防護 2：嚴格檢查房間是否真的滿了
             // 如果因為任何原因 P2 沒加入成功，絕對不能開始遊戲，否則會報錯
@@ -77,7 +78,7 @@ public class BattleController {
             MatchMessage successMsg = new MatchMessage(newRoomId, true, "配對成功！");
             
             // 通知對手 (opponent)
-            messaging.convertAndSend("/topic/player/" + opponentId, successMsg);
+            messaging.convertAndSend("/topic/player/" + opponent.id, successMsg);
             // 通知自己 (me)
             messaging.convertAndSend("/topic/player/" + myId, successMsg);
 
@@ -89,7 +90,7 @@ public class BattleController {
 
         } else {
             // ⭐ 隊列沒人，把自己加入隊列等待
-            matchmakingService.addToQueue(myId);
+            matchmakingService.addToQueue(myId, myName);
             // 通知自己：正在尋找對手...
             messaging.convertAndSend(
                 "/topic/player/" + myId, 
@@ -103,7 +104,7 @@ public class BattleController {
         Room room = roomService.getOrCreate(msg.getRoomId());
         
         // ⭐ 呼叫修改後的 join 方法，取得結果
-        boolean success = roomService.join(room, msg.getPlayerId());
+        boolean success = roomService.join(room, msg.getPlayerId(), msg.getPlayerName());
 
         if (success) {
             // 加入成功，檢查是否開始遊戲
@@ -147,7 +148,9 @@ public class BattleController {
                 setIndex(room.getCurrentIndex());
                 setQuestion(mask(room.getQuestions().get(room.getCurrentIndex())));
                 setP1Id(room.getP1().getId());
-                setP2Id(room.getP2().getId());
+                setP2Id(room.getP2().getId());  
+                setP1Name(room.getP1().getName());
+                setP2Name(room.getP2().getName());
             }}
         );
     }
