@@ -1,5 +1,7 @@
 package com.example.service;
 
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -25,7 +27,7 @@ public class RoomService {
      * 加入房間
      * @return true 表示加入成功 (或是已經在裡面), false 表示房間已滿
      */
-    public boolean join(Room room, String playerId, String playerName) {
+    public boolean join(Room room, String playerId, String playerName, String sessionId) {
         // ⭐ 關鍵防護：鎖定這個 room 物件
         // 這樣即使兩個人同時進來，也必須排隊執行這段代碼
         synchronized (room) {
@@ -38,12 +40,14 @@ public class RoomService {
                 Player p1 = new Player();
                 p1.setId(playerId);
                 p1.setName(playerName);
+                p1.setSessionId(sessionId);
                 room.setP1(p1);
                 return true;
             } else if (room.getP2() == null) {
                 Player p2 = new Player();
                 p2.setId(playerId);
                 p2.setName(playerName);
+                p2.setSessionId(sessionId);
                 room.setP2(p2);
                 return true;
             }
@@ -56,5 +60,13 @@ public class RoomService {
     public void removeRoom(String roomId) {
         rooms.remove(roomId);
         System.out.println("房間 " + roomId + " 已銷毀，記憶體釋放。");
+    }
+
+    public Collection<Room> getAllRooms() {
+        return Collections.unmodifiableCollection(rooms.values());
+    }
+
+    public Room getRoom(String roomId) {
+        return rooms.get(roomId);
     }
 }

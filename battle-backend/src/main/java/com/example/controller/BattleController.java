@@ -1,7 +1,9 @@
 package com.example.controller;
 
 import org.springframework.messaging.handler.annotation.MessageMapping;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Controller;
 
 import com.example.dto.AnswerMessage;
@@ -12,10 +14,10 @@ import com.example.dto.QuestionMessage;
 import com.example.dto.ScoreMessage;
 import com.example.model.Question;
 import com.example.model.Room;
+import com.example.service.DisconnectService;
 import com.example.service.GameService;
 import com.example.service.MatchmakingService;
 import com.example.service.RoomService;
-
 
 @Controller
 public class BattleController {
@@ -24,74 +26,63 @@ public class BattleController {
     private final GameService gameService;
     private final MatchmakingService matchmakingService;
     private final SimpMessagingTemplate messaging;
+    private final DisconnectService disconnectService;
 
     public BattleController(RoomService roomService,
                             GameService gameService,
                             MatchmakingService matchmakingService,
-                            SimpMessagingTemplate messaging) {
+                            SimpMessagingTemplate messaging,
+                            TaskScheduler taskScheduler,
+                            DisconnectService disconnectService) {
         this.roomService = roomService;
         this.gameService = gameService;
         this.matchmakingService = matchmakingService;
         this.messaging = messaging;
+        this.disconnectService = disconnectService;
     }
 
     /**
      * 玩家請求配對
      */
     @MessageMapping("/match")
-    public void match(JoinMessage msg) { // 這裡借用 JoinMessage 拿 playerId 即可
+    public void match(JoinMessage msg, SimpMessageHeaderAccessor headerAccessor) {
         String myId = msg.getPlayerId();
         String myName = msg.getPlayerName();
+        String mySessionId = headerAccessor.getSessionId();
         
-        // 1. 嘗試從隊列中抓一個對手
         MatchmakingService.QueuedPlayer opponent = matchmakingService.tryMatch();
 
-        if (opponent != null && opponent.equals(myId)) {
-            matchmakingService.addToQueue(myId, myName);
+        if (opponent != null && opponent.id.equals(myId)) {
+            matchmakingService.addToQueue(myId, myName, mySessionId);
             return;
         }
 
-        if (opponent != null) {
-            // ⭐ 配對成功！ (隊列裡有人)
-            
-            // A. 產生隨機房間 ID
+        if (opponent != null) {       
             String newRoomId = java.util.UUID.randomUUID().toString().substring(0, 8);
-            
-            // B. 建立房間並把兩人都加入
             Room room = roomService.getOrCreate(newRoomId);
-            roomService.join(room, opponent.id, opponent.name); // 先加入對手 (P1)
-            roomService.join(room, myId, myName);       // 再加入自己 (P2)
 
-            // ⭐ 防護 2：嚴格檢查房間是否真的滿了
-            // 如果因為任何原因 P2 沒加入成功，絕對不能開始遊戲，否則會報錯
+            roomService.join(room, opponent.id, opponent.name, opponent.sessionId);
+            roomService.join(room, myId, myName, mySessionId);
+
             if (room.getP1() == null || room.getP2() == null) {
                 System.err.println("配對異常：房間人數不足，取消遊戲建立。");
-                roomService.removeRoom(newRoomId); // 銷毀壞掉的房間
+                roomService.removeRoom(newRoomId);
                 return;
             }
 
-
-            // C. 初始化遊戲
             gameService.initGame(room);
 
-            // D. 通知雙方：配對成功，請前往 newRoomId
             MatchMessage successMsg = new MatchMessage(newRoomId, true, "配對成功！");
-            
-            // 通知對手 (opponent)
             messaging.convertAndSend("/topic/player/" + opponent.id, successMsg);
-            // 通知自己 (me)
             messaging.convertAndSend("/topic/player/" + myId, successMsg);
 
-            // E. 延遲一點點發送第一題 (讓前端有時間訂閱房間頻道)
             new Thread(() -> {
                 try { Thread.sleep(500); } catch (InterruptedException e) {}
-                pushQuestion(room);
+                startNewRound(room); // ⭐ 修改：開始新回合
             }).start();
 
         } else {
-            // ⭐ 隊列沒人，把自己加入隊列等待
-            matchmakingService.addToQueue(myId, myName);
-            // 通知自己：正在尋找對手...
+            matchmakingService.addToQueue(myId, myName, mySessionId);
             messaging.convertAndSend(
                 "/topic/player/" + myId, 
                 new MatchMessage(null, false, "正在尋找對手...")
@@ -100,27 +91,69 @@ public class BattleController {
     }
 
     @MessageMapping("/join")
-    public void join(JoinMessage msg) {
+    public void join(JoinMessage msg, SimpMessageHeaderAccessor headerAccessor) {
         Room room = roomService.getOrCreate(msg.getRoomId());
+        String sessionId = headerAccessor.getSessionId();
         
-        // ⭐ 呼叫修改後的 join 方法，取得結果
-        boolean success = roomService.join(room, msg.getPlayerId(), msg.getPlayerName());
+        boolean success = roomService.join(room, msg.getPlayerId(), msg.getPlayerName(), sessionId);
 
         if (success) {
-            // 加入成功，檢查是否開始遊戲
             if (room.getP1() != null && room.getP2() != null) {
                 gameService.initGame(room);
-                pushQuestion(room);
+                startNewRound(room); // ⭐ 修改：開始新回合
             }
         } else {
-            // ⭐ 加入失敗 (房間已滿)
-            // 發送錯誤訊息到該房間頻道
             messaging.convertAndSend(
                 "/topic/room/" + room.getRoomId(),
                 new ErrorMessage(msg.getPlayerId(), "房間已滿，無法加入！")
             );
         }
     }
+
+    @MessageMapping("/rejoin")
+    public void rejoin(JoinMessage msg, SimpMessageHeaderAccessor headerAccessor) {
+        Room room = roomService.getRoom(msg.getRoomId());
+
+        if (room == null) {
+            System.out.println("重連失敗：房間不存在 (" + msg.getRoomId() + ")");
+            messaging.convertAndSend(
+                "/topic/player/" + msg.getPlayerId(),
+                new ErrorMessage(msg.getPlayerId(), "遊戲已失效，請重新配對")
+            );
+            return;
+        }
+
+        if (room.getQuestions() == null || room.getQuestions().isEmpty()) {
+            System.out.println("重連失敗：房間資料異常");
+            return;
+        }
+
+        String playerId = msg.getPlayerId();
+        String newSessionId = headerAccessor.getSessionId();
+
+        boolean found = false;
+        if (room.getP1() != null && room.getP1().getId().equals(playerId)) {
+            room.getP1().setSessionId(newSessionId);
+            found = true;
+        } else if (room.getP2() != null && room.getP2().getId().equals(playerId)) {
+            room.getP2().setSessionId(newSessionId);
+            found = true;
+        }
+        
+        if (!found) {
+             System.out.println("重連失敗：玩家不在房間內");
+             return;
+        }
+
+        boolean canceled = disconnectService.cancelTask(playerId);
+        if (canceled) {
+            System.out.println("玩家 " + playerId + " 重連成功，取消銷毀任務。");
+        }
+
+        broadcastQuestion(room); // ⭐ 修改：只廣播，不重置時間
+        broadcastCurrentScores(room);
+    }
+
 
     @MessageMapping("/answer")
     public void answer(AnswerMessage msg) {
@@ -129,18 +162,50 @@ public class BattleController {
         gameService.submit(room, msg);
         broadcastScore(room);
 
-        // ⭐ 兩人都答完，直接換題（不用等 8 秒）
         if (room.getP1().isAnswered() && room.getP2().isAnswered()) {
             advance(room);
         }
     }
 
-    /* 推送題目 */
-    private void pushQuestion(Room room) {
+    /**
+     * 啟動新的一回合 (換題時呼叫)
+     */
+    private void startNewRound(Room room) {
+        if (room.getQuestions() == null || room.getQuestions().isEmpty()) {
+            System.err.println("錯誤：房間 " + room.getRoomId() + " 沒有題目，無法推送。");
+            return;
+        }
+
+        if (room.getCurrentIndex() >= room.getQuestions().size()) {
+            System.err.println("錯誤：房間 " + room.getRoomId() + " 索引越界 (" + room.getCurrentIndex() + ")");
+            return;
+        }
+        
+        // 啟動倒數計時、重置 startTime
         gameService.startQuestion(room, () -> {
-            // ⭐ 超時觸發
-            advance(room);
+            try {
+                // 再次檢查房間是否存在 (避免已被斷線機制銷毀)
+                if (roomService.getRoom(room.getRoomId()) == null) {
+                    return;
+                }
+                advance(room);
+            } catch (Exception e) {
+                System.err.println("換題排程執行異常: " + e.getMessage());
+                e.printStackTrace();
+            }
         });
+
+        // 廣播題目給所有人
+        broadcastQuestion(room);
+    }
+
+    /**
+     * 廣播題目訊息 (換題 OR 重連時呼叫)
+     */
+    private void broadcastQuestion(Room room) {
+        long now = System.currentTimeMillis();
+        long elapsed = (room.getQuestionStartTime() > 0) ? (now - room.getQuestionStartTime()) : 0;
+        long remaining = Math.max(0, 10000 - elapsed);
 
         messaging.convertAndSend(
             "/topic/room/" + room.getRoomId(),
@@ -148,25 +213,50 @@ public class BattleController {
                 setIndex(room.getCurrentIndex());
                 setQuestion(mask(room.getQuestions().get(room.getCurrentIndex())));
                 setP1Id(room.getP1().getId());
-                setP2Id(room.getP2().getId());  
+                setP2Id(room.getP2().getId());
                 setP1Name(room.getP1().getName());
                 setP2Name(room.getP2().getName());
+                setRemainingTimeMs(remaining); // 傳送正確的剩餘時間
+            }}
+        );
+    }
+
+    /**
+     * 只廣播分數，不洩漏答案 (專用於重連)
+     */
+    private void broadcastCurrentScores(Room room) {
+        messaging.convertAndSend(
+            "/topic/room/" + room.getRoomId(),
+            new ScoreMessage() {{
+                setP1Score(room.getP1().getScore());
+                setP2Score(room.getP2().getScore());
+                setP1Id(room.getP1().getId());
+                setP2Id(room.getP2().getId());
+                setCorrectAnswer(null); // ⭐ 關鍵：設為 null，避免前端顯示答案
             }}
         );
     }
 
     /* 換題 or 結束 */
     private synchronized void advance(Room room) {
-        // 1. 取消計時器
         if (room.getTimeoutTask() != null) {
             room.getTimeoutTask().cancel(false);
         }
 
-        // 2. 判斷是否還有下一題
         if (gameService.next(room)) {
-            pushQuestion(room);
+            startNewRound(room); // ⭐ 修改：開始新回合
         } else {
-            // ⭐ 遊戲結束邏輯
+            // 遊戲結束，判定贏家
+            String winnerId = null;
+            if (room.getP1().getScore() > room.getP2().getScore()) {
+                winnerId = room.getP1().getId();
+            } else if (room.getP2().getScore() > room.getP1().getScore()) {
+                winnerId = room.getP2().getId();
+            }
+            // 平手則 winnerId 為 null
+
+            final String finalWinnerId = winnerId;
+
             messaging.convertAndSend(
                 "/topic/room/" + room.getRoomId(),
                 new ScoreMessage() {{
@@ -174,18 +264,15 @@ public class BattleController {
                     setP2Score(room.getP2().getScore());
                     setP1Id(room.getP1().getId());
                     setP2Id(room.getP2().getId());
-                    setGameOver(true); // 告訴前端結束了
+                    setGameOver(true);
+                    setWinnerId(finalWinnerId); // 設定贏家
                 }}
             );
-
-            // ⭐ 關鍵修正：發送完結束訊號後，銷毀房間
-            // 這樣下次再用同一個 ID 加入時，就會建立全新的房間
             roomService.removeRoom(room.getRoomId());
         }
     }
 
     private void broadcastScore(Room room) {
-        // 取得當前題目的正確答案
         String currentAns = room.getQuestions().get(room.getCurrentIndex()).getAnswer();
 
         messaging.convertAndSend(
@@ -193,10 +280,8 @@ public class BattleController {
             new ScoreMessage() {{
                 setP1Score(room.getP1().getScore());
                 setP2Score(room.getP2().getScore());
-                // ⭐ 設定 ID，讓前端能分辨誰是誰
                 setP1Id(room.getP1().getId());
                 setP2Id(room.getP2().getId());
-                // ⭐ 設定正確答案，讓前端做 UI 變色
                 setCorrectAnswer(currentAns);
             }}
         );

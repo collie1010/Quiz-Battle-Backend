@@ -9,6 +9,7 @@ public class QuestionMessage {
     private String p2Id;
     private String p1Name;
     private String p2Name;
+    private long remainingTimeMs;
 
     // Default constructor
     public QuestionMessage() {}
@@ -47,6 +48,9 @@ public class QuestionMessage {
 
     public String getP2Name() { return p2Name; }
     public void setP2Name(String p2Name) { this.p2Name = p2Name; }
+
+    public long getRemainingTimeMs() { return remainingTimeMs; }
+    public void setRemainingTimeMs(long remainingTimeMs) { this.remainingTimeMs = remainingTimeMs; }
 
     @Override
     public String toString() {

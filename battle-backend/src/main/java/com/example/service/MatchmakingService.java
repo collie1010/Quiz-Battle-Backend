@@ -11,9 +11,11 @@ public class MatchmakingService {
     public static class QueuedPlayer {
         public String id;
         public String name;
-        public QueuedPlayer(String id, String name) {
+        public String sessionId;
+        public QueuedPlayer(String id, String name, String sessionId) {
             this.id = id;
             this.name = name;
+            this.sessionId = sessionId;
         }
     }
 
@@ -24,10 +26,10 @@ public class MatchmakingService {
      * 加入排隊
      * @param playerId 玩家 ID
      */
-    public void addToQueue(String playerId, String name) {
+    public void addToQueue(String playerId, String name, String sessionId) {
         boolean exists = waitingQueue.stream().anyMatch(p -> p.id.equals(playerId));
         if (!exists) {
-            waitingQueue.add(new QueuedPlayer(playerId, name));
+            waitingQueue.add(new QueuedPlayer(playerId, name, sessionId));
         }
     }
 
@@ -48,8 +50,7 @@ public class MatchmakingService {
         return waitingQueue.size();
     }
     
-    // 移除玩家 (例如取消配對)
-    public void removePlayer(String playerId) {
-        waitingQueue.remove(playerId);
+    public void removePlayerBySessionId(String sessionId) {
+        waitingQueue.removeIf(p -> p.sessionId.equals(sessionId));
     }
 }

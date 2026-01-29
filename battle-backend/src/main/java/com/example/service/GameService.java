@@ -1,8 +1,8 @@
 package com.example.service;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Date;
 import java.util.List;
 
 import org.springframework.scheduling.TaskScheduler;
@@ -42,23 +42,27 @@ public class GameService {
         if (room.getP1() == null || room.getP2() == null) {
             return;
         }
-
+    
         room.setQuestionStartTime(System.currentTimeMillis());
         room.getP1().setAnswered(false);
         room.getP2().setAnswered(false);
-
-        // ⭐ 取消上一題的 timeout
+    
+        // ⭐ 取消上一題的 timeout (如果有)
         if (room.getTimeoutTask() != null) {
             room.getTimeoutTask().cancel(false);
         }
-
-        // ⭐ 排程超時事件
+    
+        // ⭐ 修正後的排程邏輯：使用 TaskScheduler 原生方法 + Instant
+        // 計算預計執行的時間點 (現在時間 + 限制時間)
+        Instant executionTime = Instant.now().plusMillis(TIME_LIMIT_MS);
+        
+        // 使用 Spring TaskScheduler 進行排程
         room.setTimeoutTask(
-            scheduler.schedule(
-                onTimeout,
-                new Date(System.currentTimeMillis() + TIME_LIMIT_MS)
-            )
+            scheduler.schedule(onTimeout, executionTime)
         );
+        
+        // Log 方便觀察 (可選)
+        System.out.println("題目已推送，超時任務已排程於: " + executionTime);
     }
 
     /* 玩家作答 */

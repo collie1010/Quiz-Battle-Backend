@@ -7,6 +7,8 @@ public class ScoreMessage {
     private String p2Id; // 新增：玩家2的ID
     private String correctAnswer; // ⭐ 新增：告訴前端這題答案是什麼
     private boolean gameOver; // ⭐ 新增：遊戲結束旗標
+    private String message; 
+    private String winnerId; 
 
     // Default constructor
     public ScoreMessage() {}
@@ -65,6 +67,12 @@ public class ScoreMessage {
     public void setGameOver(boolean gameOver) {
         this.gameOver = gameOver;
     }
+
+    public String getMessage() { return message; }
+    public void setMessage(String message) { this.message = message; }
+
+    public String getWinnerId() { return winnerId; }
+    public void setWinnerId(String winnerId) { this.winnerId = winnerId; }
 
     @Override
     public String toString() {
