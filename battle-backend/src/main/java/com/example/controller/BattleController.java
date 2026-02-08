@@ -89,6 +89,7 @@ public class BattleController {
     public void ready(JoinMessage msg) {
         Room room = roomService.getRoom(msg.getRoomId());
         if (room == null) return;
+        else room.updateActivity(); // 更新房間最後活動時間
 
         // ⭐ 必須鎖定房間，確保並發安全
         synchronized (room) {
@@ -152,6 +153,8 @@ public class BattleController {
             return;
         }
 
+        room.updateActivity(); // 更新房間最後活動時間
+
         String playerId = msg.getPlayerId();
         String newSessionId = headerAccessor.getSessionId();
 
@@ -165,8 +168,8 @@ public class BattleController {
         }
         
         if (!found) {
-             System.out.println("重連失敗：玩家不在房間內");
-             return;
+            System.out.println("重連失敗：玩家不在房間內");
+            return;
         }
 
         boolean canceled = disconnectService.cancelTask(playerId);
@@ -182,6 +185,7 @@ public class BattleController {
     @MessageMapping("/answer")
     public void answer(AnswerMessage msg) {
         Room room = roomService.getOrCreate(msg.getRoomId());
+        if (room != null) room.updateActivity(); // 更新房間最後活動時間
 
         gameService.submit(room, msg);
         broadcastScore(room);

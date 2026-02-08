@@ -2,9 +2,11 @@ package com.example.service;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import com.example.model.Player;
@@ -54,6 +56,34 @@ public class RoomService {
 
             // 3. 兩個位置都滿了，拒絕加入
             return false;
+        }
+    }
+
+    // ⭐ 定時任務：每 60 秒執行一次
+    // initialDelay = 60000 (啟動後 1 分鐘開始)
+    // fixedRate = 60000 (每隔 1 分鐘執行)
+    @Scheduled(initialDelay = 60000, fixedRate = 60000)
+    public void cleanUpZombieRooms() {
+        long now = System.currentTimeMillis();
+        long timeout = 10 * 60 * 1000; // 設定 10 分鐘超時 (可依需求調整)
+
+        System.out.println("執行殭屍房間清理檢查...");
+
+        Iterator<Map.Entry<String, Room>> iterator = rooms.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, Room> entry = iterator.next();
+            Room room = entry.getValue();
+
+            if (now - room.getLastActiveTime() > timeout) {
+                System.out.println("發現殭屍房間 " + room.getRoomId() + "，強制銷毀！");
+                
+                // 這裡可以做一些額外清理，例如取消該房間內的 ScheduledFuture (如果有的話)
+                if (room.getTimeoutTask() != null) {
+                    room.getTimeoutTask().cancel(true);
+                }
+                
+                iterator.remove(); // 從 Map 中移除
+            }
         }
     }
 

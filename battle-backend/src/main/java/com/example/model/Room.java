@@ -13,6 +13,7 @@ public class Room {
     private boolean gameStarted = false;
     private int currentIndex = 0;
     private long questionStartTime;
+    private long lastActiveTime = System.currentTimeMillis();
     private List<Question> questions = new ArrayList<>();
 
     // ⭐ 新增：超時任務管理
@@ -93,6 +94,14 @@ public class Room {
 
     public void setQuestionStartTime(long questionStartTime) {
         this.questionStartTime = questionStartTime;
+    }
+
+    public long getLastActiveTime() { 
+        return lastActiveTime; 
+    }
+
+    public void updateActivity() {
+        this.lastActiveTime = System.currentTimeMillis();
     }
 
     public List<Question> getQuestions() {
