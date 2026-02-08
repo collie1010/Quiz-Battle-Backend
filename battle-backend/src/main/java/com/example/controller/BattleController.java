@@ -76,11 +76,6 @@ public class BattleController {
             messaging.convertAndSend("/topic/player/" + opponent.id, successMsg);
             messaging.convertAndSend("/topic/player/" + myId, successMsg);
 
-            new Thread(() -> {
-                try { Thread.sleep(500); } catch (InterruptedException e) {}
-                startNewRound(room); // ⭐ 修改：開始新回合
-            }).start();
-
         } else {
             matchmakingService.addToQueue(myId, myName, mySessionId);
             messaging.convertAndSend(
@@ -89,6 +84,35 @@ public class BattleController {
             );
         }
     }
+
+    @MessageMapping("/ready")
+    public void ready(JoinMessage msg) {
+        Room room = roomService.getRoom(msg.getRoomId());
+        if (room == null) return;
+
+        // ⭐ 必須鎖定房間，確保並發安全
+        synchronized (room) {
+            if (room.getP1() != null && room.getP1().getId().equals(msg.getPlayerId())) {
+                room.setP1Ready(true);
+            } else if (room.getP2() != null && room.getP2().getId().equals(msg.getPlayerId())) {
+                room.setP2Ready(true);
+            }
+
+            // ⭐ 關鍵邏輯：
+            // 1. 雙方都準備好了 (isAllReady)
+            // 2. 遊戲還沒開始 (!isGameStarted)
+            if (room.isAllReady() && !room.isGameStarted()) {
+                System.out.println("雙方就緒，遊戲正式開始！");
+                
+                // 1. 鎖定狀態，防止第二次進入
+                room.setGameStarted(true);
+                
+                // 2. 發送第一題
+                startNewRound(room);
+            }
+        }
+    }
+
 
     @MessageMapping("/join")
     public void join(JoinMessage msg, SimpMessageHeaderAccessor headerAccessor) {

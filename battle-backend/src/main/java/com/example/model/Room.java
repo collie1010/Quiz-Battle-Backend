@@ -8,6 +8,9 @@ public class Room {
     private String roomId;
     private Player p1;
     private Player p2;
+    private boolean p1Ready = false;
+    private boolean p2Ready = false;
+    private boolean gameStarted = false;
     private int currentIndex = 0;
     private long questionStartTime;
     private List<Question> questions = new ArrayList<>();
@@ -46,6 +49,34 @@ public class Room {
 
     public void setP2(Player p2) {
         this.p2 = p2;
+    }
+
+    public boolean isP1Ready() {
+        return p1Ready;
+    }
+
+    public void setP1Ready(boolean p1Ready) {
+        this.p1Ready = p1Ready;
+    }
+    
+    public boolean isP2Ready() {
+        return p2Ready;
+    }
+    
+    public void setP2Ready(boolean p2Ready) {
+        this.p2Ready = p2Ready;
+    }
+
+    public boolean isGameStarted() {
+        return gameStarted;
+    }
+
+    public void setGameStarted(boolean gameStarted) {
+        this.gameStarted = gameStarted;
+    }
+
+    public boolean isAllReady() {
+        return p1Ready && p2Ready;
     }
 
     public int getCurrentIndex() {
