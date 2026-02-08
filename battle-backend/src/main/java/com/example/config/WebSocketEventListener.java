@@ -85,6 +85,8 @@ public class WebSocketEventListener {
                             new ScoreMessage() {{
                                 setP1Score(targetRoom.getP1().getScore());
                                 setP2Score(targetRoom.getP2().getScore());
+                                setP1Id(targetRoom.getP1().getId());
+                                setP2Id(targetRoom.getP2().getId());
                                 setGameOver(true);
                                 setMessage("對手斷線，你贏了！");
                                 setWinnerId(targetWinner.getId());

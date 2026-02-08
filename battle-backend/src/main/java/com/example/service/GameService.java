@@ -67,44 +67,62 @@ public class GameService {
 
     /* 玩家作答 */
     public boolean submit(Room room, AnswerMessage msg) {
-        Player player = msg.getPlayerId().equals(room.getP1().getId()) ? room.getP1() : room.getP2();
+
+        synchronized (room) {
+            Player player = null;
+            if (room.getP1() != null && room.getP1().getId().equals(msg.getPlayerId())) {
+                player = room.getP1();
+            } else if (room.getP2() != null && room.getP2().getId().equals(msg.getPlayerId())) {
+                player = room.getP2();
+            }
+
+            if (player == null) return false;
         
-        // 1. 檢查是否已作答
-        if (player.isAnswered()) return false;
-        player.setAnswered(true);
+            // 1. 檢查是否已作答
+            if (player.isAnswered()) return false;
+            player.setAnswered(true);
 
-        // ⭐ 修正點 1：改用伺服器當下時間計算耗時 (解決前後端時間不同步問題)
-        long serverNow = System.currentTimeMillis();
-        long elapsed = serverNow - room.getQuestionStartTime();
+            // ⭐ 修正點 1：改用伺服器當下時間計算耗時 (解決前後端時間不同步問題)
+            long serverNow = System.currentTimeMillis();
+            long elapsed = serverNow - room.getQuestionStartTime();
 
-        // ⭐ 修正點 2：加入 Log 方便除錯 (建議開發階段保留)
-        System.out.println("玩家回答: " + msg.getAnswer());
-        System.out.println("正確答案: " + room.getQuestions().get(room.getCurrentIndex()).getAnswer());
-        System.out.println("耗時(ms): " + elapsed);
+            // ⭐ 修正點 2：加入 Log 方便除錯 (建議開發階段保留)
+            System.out.println("玩家回答: " + msg.getAnswer());
+            System.out.println("正確答案: " + room.getQuestions().get(room.getCurrentIndex()).getAnswer());
+            System.out.println("耗時(ms): " + elapsed);
 
-        // 判定超時 (8000ms + 緩衝)
-        if (elapsed > TIME_LIMIT_MS + 500) {
-            System.out.println("判定超時，不計分");
-            return false;
+            // 判定超時 (8000ms + 緩衝)
+            if (elapsed > TIME_LIMIT_MS + 500) {
+                System.out.println("判定超時，不計分");
+                return false;
+            }
+
+            // ⭐ 極致防護：確保題目列表存在且索引有效
+            // 雖然理論上 pushQuestion 已經檢查過，但在多執行緒環境下多檢查一次無害
+            if (room.getQuestions() == null || 
+                room.getCurrentIndex() >= room.getQuestions().size()) {
+                return false;
+            }
+
+            Question q = room.getQuestions().get(room.getCurrentIndex());
+
+            // 字串比對邏輯 (你之前改的 trim + ignoreCase)
+            String dbAnswer = q.getAnswer() != null ? q.getAnswer().trim() : "";
+            String playerAnswer = msg.getAnswer() != null ? msg.getAnswer().trim() : "";
+
+            if (dbAnswer.equalsIgnoreCase(playerAnswer)) {
+                // 分數計算
+                int score = BASE_SCORE + (int)((TIME_LIMIT_MS - elapsed) / 100);
+                score = Math.max(score, BASE_SCORE);
+                
+                player.setScore(player.getScore() + score);
+                System.out.println("答對！加分: " + score + "，目前總分: " + player.getScore());
+            } else {
+                System.out.println("答錯！");
+            }
+            return true;
         }
-
-        Question q = room.getQuestions().get(room.getCurrentIndex());
-
-        // 字串比對邏輯 (你之前改的 trim + ignoreCase)
-        String dbAnswer = q.getAnswer() != null ? q.getAnswer().trim() : "";
-        String playerAnswer = msg.getAnswer() != null ? msg.getAnswer().trim() : "";
-
-        if (dbAnswer.equalsIgnoreCase(playerAnswer)) {
-            // 分數計算
-            int score = BASE_SCORE + (int)((TIME_LIMIT_MS - elapsed) / 100);
-            score = Math.max(score, BASE_SCORE);
-            
-            player.setScore(player.getScore() + score);
-            System.out.println("答對！加分: " + score + "，目前總分: " + player.getScore());
-        } else {
-            System.out.println("答錯！");
-        }
-        return true;
+        
     }
 
     /* 換題 */
