@@ -1,6 +1,8 @@
 package com.example.service;
 
 import java.util.Queue;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 import org.springframework.stereotype.Service;
@@ -22,13 +24,15 @@ public class MatchmakingService {
     // 執行緒安全的佇列，用來存排隊的玩家 ID
     private final Queue<QueuedPlayer> waitingQueue = new ConcurrentLinkedQueue<>();
 
+    private final Set<String> queuedPlayerIds = ConcurrentHashMap.newKeySet();
+
     /**
      * 加入排隊
      * @param playerId 玩家 ID
      */
     public void addToQueue(String playerId, String name, String sessionId) {
-        boolean exists = waitingQueue.stream().anyMatch(p -> p.id.equals(playerId));
-        if (!exists) {
+         // O(1) 檢查
+        if (queuedPlayerIds.add(playerId)) { // add 回傳 true 表示原本不存在
             waitingQueue.add(new QueuedPlayer(playerId, name, sessionId));
         }
     }
@@ -38,11 +42,11 @@ public class MatchmakingService {
      * @return 如果配對成功，回傳對手的 ID；如果人數不足，回傳 null
      */
     public QueuedPlayer tryMatch() {
-        // 只有當隊列裡還有人的時候，才能配對
-        if (!waitingQueue.isEmpty()) {
-            return waitingQueue.poll(); // 取出並移除隊列頭部的人
+        QueuedPlayer player = waitingQueue.poll();
+        if (player != null) {
+            queuedPlayerIds.remove(player.id); // 記得移除
         }
-        return null;
+        return player;
     }
     
     // 檢查隊列大小
