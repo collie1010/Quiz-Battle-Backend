@@ -44,6 +44,7 @@ public class GameService {
             selected.add(repo.getAll().get(idx));
         }
         room.setQuestions(selected);
+        room.setCurrentIndex(0); 
     }
 
     /* 推送題目前呼叫 */
