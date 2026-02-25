@@ -2,8 +2,10 @@ package com.example.service;
 
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
@@ -30,10 +32,18 @@ public class GameService {
 
     /* 初始化一場比賽 */
     public void initGame(Room room) {
-        List<Question> pool = new ArrayList<>(repo.getAll());
-        Collections.shuffle(pool);
-        room.setQuestions(pool.subList(0, QUESTION_COUNT));
-        room.setCurrentIndex(0);
+        int totalQuestions = repo.getAll().size();
+        // 用 ThreadLocalRandom 生成 10 個不重複的隨機數字即可
+        Set<Integer> randomIndices = new HashSet<>();
+        while (randomIndices.size() < QUESTION_COUNT) {
+            randomIndices.add(ThreadLocalRandom.current().nextInt(totalQuestions));
+        }
+        
+        List<Question> selected = new ArrayList<>();
+        for (int idx : randomIndices) {
+            selected.add(repo.getAll().get(idx));
+        }
+        room.setQuestions(selected);
     }
 
     /* 推送題目前呼叫 */
