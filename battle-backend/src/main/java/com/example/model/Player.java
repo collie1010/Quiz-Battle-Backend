@@ -1,11 +1,14 @@
 package com.example.model;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class Player {
     private String id;
     private String name;
     private String sessionId;
-    private int score = 0;
-    private boolean answered = false;
+    private final AtomicInteger score = new AtomicInteger(0);
+    private final AtomicBoolean answered = new AtomicBoolean(false);
 
     // Default constructor
     public Player() {}
@@ -41,27 +44,35 @@ public class Player {
     }
 
     public int getScore() {
-        return score;
+        return score.get();
     }
 
     public void setScore(int score) {
-        this.score = score;
+        this.score.set(score);
+    }
+
+    public AtomicInteger getScoreAtomic() {
+        return score;
     }
 
     public boolean isAnswered() {
-        return answered;
+        return answered.get();
     }
 
     public void setAnswered(boolean answered) {
-        this.answered = answered;
+        this.answered.set(answered);
+    }
+
+    public AtomicBoolean getAnsweredAtomic() {
+        return answered;
     }
 
     @Override
     public String toString() {
         return "Player{" +
                 "id='" + id + '\'' +
-                ", score=" + score +
-                ", answered=" + answered +
+                ", score=" + score.get() +
+                ", answered=" + answered.get() +
                 '}';
     }
 
