@@ -6,6 +6,8 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -14,6 +16,8 @@ import com.example.model.Room;
 
 @Service
 public class RoomService {
+
+    private static final Logger log = LoggerFactory.getLogger(RoomService.class);
 
     private final Map<String, Room> rooms = new ConcurrentHashMap<>();
 
@@ -67,7 +71,7 @@ public class RoomService {
         long now = System.currentTimeMillis();
         long timeout = 10 * 60 * 1000; // 設定 10 分鐘超時 (可依需求調整)
 
-        System.out.println("執行殭屍房間清理檢查...");
+        log.info("執行殭屍房間清理檢查...");
 
         Iterator<Map.Entry<String, Room>> iterator = rooms.entrySet().iterator();
         while (iterator.hasNext()) {
@@ -75,7 +79,7 @@ public class RoomService {
             Room room = entry.getValue();
 
             if (now - room.getLastActiveTime() > timeout) {
-                System.out.println("發現殭屍房間 " + room.getRoomId() + "，強制銷毀！");
+                log.info("發現殭屍房間 {}，強制銷毀！", room.getRoomId());
                 
                 // 這裡可以做一些額外清理，例如取消該房間內的 ScheduledFuture (如果有的話)
                 if (room.getTimeoutTask() != null) {
@@ -89,7 +93,7 @@ public class RoomService {
 
     public void removeRoom(String roomId) {
         rooms.remove(roomId);
-        System.out.println("房間 " + roomId + " 已銷毀，記憶體釋放。");
+        log.info("房間 {} 已銷毀，記憶體釋放。", roomId);
     }
 
     public Collection<Room> getAllRooms() {

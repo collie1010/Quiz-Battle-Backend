@@ -3,6 +3,8 @@ package com.example.config;
 import java.time.Instant;
 import java.util.concurrent.ScheduledFuture;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.TaskScheduler;
@@ -18,6 +20,8 @@ import com.example.service.RoomService;
 
 @Component
 public class WebSocketEventListener {
+
+    private static final Logger log = LoggerFactory.getLogger(WebSocketEventListener.class);
 
     private final RoomService roomService;
     private final SimpMessagingTemplate messaging;
@@ -40,7 +44,7 @@ public class WebSocketEventListener {
     @EventListener
     public void handleWebSocketDisconnectListener(SessionDisconnectEvent event) {
         String sessionId = event.getSessionId();
-        // System.out.println("偵測到斷線，Session ID: " + sessionId);
+        // log.debug("偵測到斷線，Session ID: {}", sessionId);
 
         matchmakingService.removePlayerBySessionId(sessionId);
 
@@ -61,7 +65,7 @@ public class WebSocketEventListener {
                 final Room targetRoom = room;
                 final Player targetWinner = winner;
 
-                System.out.println("玩家 " + disconnectedPlayer.getName() + " 斷線，啟動 3 秒緩衝...");
+                log.info("玩家 {} 斷線，啟動 3 秒緩衝...", disconnectedPlayer.getName());
 
                 // ❌ 刪除這段代碼！不要取消遊戲計時器！
                 // if (targetRoom.getTimeoutTask() != null) {
@@ -70,7 +74,7 @@ public class WebSocketEventListener {
 
                 // 啟動斷線判輸的倒數任務 (3秒後如果沒回來才執行)
                 ScheduledFuture<?> task = taskScheduler.schedule(() -> {
-                    System.out.println("玩家 " + playerId + " 未在時間內重連，判輸。");
+                    log.info("玩家 {} 未在時間內重連，判輸。", playerId);
 
                     disconnectService.cancelTask(playerId);
 

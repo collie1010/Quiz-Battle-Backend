@@ -1,5 +1,7 @@
 package com.example.controller;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -21,6 +23,8 @@ import com.example.service.RoomService;
 
 @Controller
 public class BattleController {
+
+    private static final Logger log = LoggerFactory.getLogger(BattleController.class);
 
     private final RoomService roomService;
     private final GameService gameService;
@@ -65,7 +69,7 @@ public class BattleController {
             roomService.join(room, myId, myName, mySessionId);
 
             if (room.getP1() == null || room.getP2() == null) {
-                System.err.println("配對異常：房間人數不足，取消遊戲建立。");
+                log.error("配對異常：房間人數不足，取消遊戲建立。");
                 roomService.removeRoom(newRoomId);
                 return;
             }
@@ -103,7 +107,7 @@ public class BattleController {
             // 1. 雙方都準備好了 (isAllReady)
             // 2. 遊戲還沒開始 (!isGameStarted)
             if (room.isAllReady() && !room.isGameStarted()) {
-                System.out.println("雙方就緒，遊戲正式開始！");
+                log.info("雙方就緒，遊戲正式開始！");
                 
                 // 1. 鎖定狀態，防止第二次進入
                 room.setGameStarted(true);
@@ -140,7 +144,7 @@ public class BattleController {
         Room room = roomService.getRoom(msg.getRoomId());
 
         if (room == null) {
-            System.out.println("重連失敗：房間不存在 (" + msg.getRoomId() + ")");
+            log.info("重連失敗：房間不存在 ({})", msg.getRoomId());
             messaging.convertAndSend(
                 "/topic/player/" + msg.getPlayerId(),
                 new ErrorMessage(msg.getPlayerId(), "遊戲已失效，請重新配對")
@@ -149,7 +153,7 @@ public class BattleController {
         }
 
         if (room.getQuestions() == null || room.getQuestions().isEmpty()) {
-            System.out.println("重連失敗：房間資料異常");
+            log.info("重連失敗：房間資料異常");
             return;
         }
 
@@ -168,13 +172,13 @@ public class BattleController {
         }
         
         if (!found) {
-            System.out.println("重連失敗：玩家不在房間內");
+            log.info("重連失敗：玩家不在房間內");
             return;
         }
 
         boolean canceled = disconnectService.cancelTask(playerId);
         if (canceled) {
-            System.out.println("玩家 " + playerId + " 重連成功，取消銷毀任務。");
+            log.info("玩家 {} 重連成功，取消銷毀任務。", playerId);
         }
 
         broadcastQuestion(room); // ⭐ 修改：只廣播，不重置時間
@@ -200,12 +204,12 @@ public class BattleController {
      */
     private void startNewRound(Room room) {
         if (room.getQuestions() == null || room.getQuestions().isEmpty()) {
-            System.err.println("錯誤：房間 " + room.getRoomId() + " 沒有題目，無法推送。");
+            log.error("錯誤：房間 {} 沒有題目，無法推送。", room.getRoomId());
             return;
         }
 
         if (room.getCurrentIndex() >= room.getQuestions().size()) {
-            System.err.println("錯誤：房間 " + room.getRoomId() + " 索引越界 (" + room.getCurrentIndex() + ")");
+            log.error("錯誤：房間 {} 索引越界 ({})", room.getRoomId(), room.getCurrentIndex());
             return;
         }
         
@@ -218,8 +222,7 @@ public class BattleController {
                 }
                 advance(room);
             } catch (Exception e) {
-                System.err.println("換題排程執行異常: " + e.getMessage());
-                e.printStackTrace();
+                log.error("換題排程執行異常: {}", e.getMessage(), e);
             }
         });
 
