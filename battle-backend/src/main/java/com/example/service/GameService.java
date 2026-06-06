@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 
@@ -15,6 +17,8 @@ import com.example.model.Room;
 
 @Service
 public class GameService {
+
+    private static final Logger logger = LoggerFactory.getLogger(GameService.class);
 
     private static final int QUESTION_COUNT = 10;
     private static final int TIME_LIMIT_MS = 10000;
@@ -61,8 +65,7 @@ public class GameService {
             scheduler.schedule(onTimeout, executionTime)
         );
         
-        // Log 方便觀察 (可選)
-        System.out.println("題目已推送，超時任務已排程於: " + executionTime);
+        logger.info("題目已推送，超時任務已排程於: {}", executionTime);
     }
 
     /* 玩家作答 */
@@ -87,13 +90,13 @@ public class GameService {
             long elapsed = serverNow - room.getQuestionStartTime();
 
             // ⭐ 修正點 2：加入 Log 方便除錯 (建議開發階段保留)
-            System.out.println("玩家回答: " + msg.getAnswer());
-            System.out.println("正確答案: " + room.getQuestions().get(room.getCurrentIndex()).getAnswer());
-            System.out.println("耗時(ms): " + elapsed);
+            logger.debug("玩家回答: {}", msg.getAnswer());
+            logger.debug("正確答案: {}", room.getQuestions().get(room.getCurrentIndex()).getAnswer());
+            logger.debug("耗時(ms): {}", elapsed);
 
             // 判定超時 (8000ms + 緩衝)
             if (elapsed > TIME_LIMIT_MS + 500) {
-                System.out.println("判定超時，不計分");
+                logger.warn("判定超時，不計分");
                 return false;
             }
 
@@ -116,9 +119,9 @@ public class GameService {
                 score = Math.max(score, BASE_SCORE);
                 
                 player.setScore(player.getScore() + score);
-                System.out.println("答對！加分: " + score + "，目前總分: " + player.getScore());
+                logger.info("答對！加分: {}，目前總分: {}", score, player.getScore());
             } else {
-                System.out.println("答錯！");
+                logger.info("答錯！");
             }
             return true;
         }
