@@ -19,6 +19,9 @@ public class Room {
     // ⭐ 新增：超時任務管理
     private ScheduledFuture<?> timeoutTask;
 
+    // ⭐ 防止 advance() 重複進入 (timeout 與雙方答完同時觸發)
+    private volatile boolean advancing = false;
+
     // Default constructor
     public Room() {}
 
@@ -119,6 +122,9 @@ public class Room {
     public void setTimeoutTask(ScheduledFuture<?> timeoutTask) {
         this.timeoutTask = timeoutTask;
     }
+
+    public boolean isAdvancing() { return advancing; }
+    public void setAdvancing(boolean advancing) { this.advancing = advancing; }
 
     @Override
     public String toString() {

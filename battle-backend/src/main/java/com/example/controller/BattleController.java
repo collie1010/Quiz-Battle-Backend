@@ -47,21 +47,20 @@ public class BattleController {
 
     /**
      * 玩家請求配對
+     * 
+     * 使用原子化 tryMatchOrQueue() 避免 tryMatch() 與 addToQueue() 間的競態窗口。
      */
     @MessageMapping("/match")
     public void match(JoinMessage msg, SimpMessageHeaderAccessor headerAccessor) {
         String myId = msg.getPlayerId();
         String myName = msg.getPlayerName();
         String mySessionId = headerAccessor.getSessionId();
-        
-        MatchmakingService.QueuedPlayer opponent = matchmakingService.tryMatch();
 
-        if (opponent != null && opponent.id.equals(myId)) {
-            matchmakingService.addToQueue(myId, myName, mySessionId);
-            return;
-        }
+        MatchmakingService.MatchResult result = matchmakingService.tryMatchOrQueue(myId, myName, mySessionId);
 
-        if (opponent != null) {       
+        if (result.matched) {
+            // 配對成功，創建房間
+            MatchmakingService.QueuedPlayer opponent = result.opponent;
             String newRoomId = java.util.UUID.randomUUID().toString().substring(0, 8);
             Room room = roomService.getOrCreate(newRoomId);
 
@@ -81,9 +80,9 @@ public class BattleController {
             messaging.convertAndSend("/topic/player/" + myId, successMsg);
 
         } else {
-            matchmakingService.addToQueue(myId, myName, mySessionId);
+            // 等待中
             messaging.convertAndSend(
-                "/topic/player/" + myId, 
+                "/topic/player/" + myId,
                 new MatchMessage(null, false, "正在尋找對手...")
             );
         }
@@ -188,14 +187,31 @@ public class BattleController {
 
     @MessageMapping("/answer")
     public void answer(AnswerMessage msg) {
-        Room room = roomService.getOrCreate(msg.getRoomId());
-        if (room != null) room.updateActivity(); // 更新房間最後活動時間
+        // ✅ 改用 getRoom()，房間不存在就直接返回，不建立新房間
+        Room room = roomService.getRoom(msg.getRoomId());
 
-        gameService.submit(room, msg);
+        // ✅ 防禦：房間不存在（可能已結束或 roomId 錯誤）
+        if (room == null) {
+            logger.warn("answer() 忽略：房間不存在 ({})", msg.getRoomId());
+            return;
+        }
+
+        room.updateActivity();
+
+        boolean submitted = gameService.submit(room, msg);
+        if (!submitted) {
+            return;
+        }
+
         broadcastScore(room);
 
-        if (room.getP1().isAnswered() && room.getP2().isAnswered()) {
-            advance(room);
+        // ✅ 將「雙方都答完」的判斷移入 synchronized(room)
+        // 確保不會有兩個執行緒同時觸發 advance()
+        synchronized (room) {
+            if (room.getP1() != null && room.getP2() != null
+                    && room.getP1().isAnswered() && room.getP2().isAnswered()) {
+                advance(room); // advance() 內部也有 synchronized(room)，Java 允許可重入鎖
+            }
         }
     }
 
@@ -269,41 +285,63 @@ public class BattleController {
     }
 
     /* 換題 or 結束 */
-    private synchronized void advance(Room room) {
-        if (room.getTimeoutTask() != null) {
-            room.getTimeoutTask().cancel(false);
-        }
+    private void advance(Room room) {
+        synchronized (room) {
+            if (room.isAdvancing()) return;
+            room.setAdvancing(true);
 
-        if (gameService.next(room)) {
-            startNewRound(room); // ⭐ 修改：開始新回合
-        } else {
-            // 遊戲結束，判定贏家
-            String winnerId = null;
-            if (room.getP1().getScore() > room.getP2().getScore()) {
-                winnerId = room.getP1().getId();
-            } else if (room.getP2().getScore() > room.getP1().getScore()) {
-                winnerId = room.getP2().getId();
+            // ✅ 移除 try-finally，遊戲結束就永遠保持 advancing = true
+            // 只有「還有下一題」的情況才重置，讓下一題可以繼續
+            if (room.getTimeoutTask() != null) {
+                room.getTimeoutTask().cancel(false);
+                room.setTimeoutTask(null);
             }
-            // 平手則 winnerId 為 null
 
-            final String finalWinnerId = winnerId;
-
-            messaging.convertAndSend(
-                "/topic/room/" + room.getRoomId(),
-                new ScoreMessage() {{
-                    setP1Score(room.getP1().getScore());
-                    setP2Score(room.getP2().getScore());
-                    setP1Id(room.getP1().getId());
-                    setP2Id(room.getP2().getId());
-                    setGameOver(true);
-                    setWinnerId(finalWinnerId); // 設定贏家
-                }}
-            );
-            roomService.removeRoom(room.getRoomId());
+            if (gameService.next(room)) {
+                room.setAdvancing(false); // ✅ 只在換題時重置，讓下一題能進入
+                startNewRound(room);
+            } else {
+                // 遊戲結束：advancing 永遠保持 true，防止任何後續進入
+                handleGameOver(room);
+            }
         }
     }
 
+    private void handleGameOver(Room room) {
+        String winnerId = null;
+        if (room.getP1().getScore() > room.getP2().getScore()) {
+            winnerId = room.getP1().getId();
+        } else if (room.getP2().getScore() > room.getP1().getScore()) {
+            winnerId = room.getP2().getId();
+        }
+
+        final String finalWinnerId = winnerId;
+
+        messaging.convertAndSend(
+            "/topic/room/" + room.getRoomId(),
+            new ScoreMessage() {{
+                setP1Score(room.getP1().getScore());
+                setP2Score(room.getP2().getScore());
+                setP1Id(room.getP1().getId());
+                setP2Id(room.getP2().getId());
+                setGameOver(true);
+                setWinnerId(finalWinnerId);
+            }}
+        );
+        roomService.removeRoom(room.getRoomId());
+    }
+
     private void broadcastScore(Room room) {
+        // ⭐ 防禦性檢查：確保 questions 不為空且索引有效
+        if (room.getQuestions() == null || room.getQuestions().isEmpty()) {
+            logger.warn("broadcastScore 失敗：房間 {} 題目列表為空", room.getRoomId());
+            return;
+        }
+        if (room.getCurrentIndex() < 0 || room.getCurrentIndex() >= room.getQuestions().size()) {
+            logger.warn("broadcastScore 失敗：房間 {} 索引越界 ({})", room.getRoomId(), room.getCurrentIndex());
+            return;
+        }
+
         String currentAns = room.getQuestions().get(room.getCurrentIndex()).getAnswer();
 
         messaging.convertAndSend(
