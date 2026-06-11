@@ -10,7 +10,8 @@ public class Room {
     private Player p2;
     private boolean p1Ready = false;
     private boolean p2Ready = false;
-    private boolean gameStarted = false;
+    private volatile boolean gameStarted = false;
+    private volatile boolean gameOver = false;
     private int currentIndex = 0;
     private long questionStartTime;
     private long lastActiveTime = System.currentTimeMillis();
@@ -125,6 +126,9 @@ public class Room {
 
     public boolean isAdvancing() { return advancing; }
     public void setAdvancing(boolean advancing) { this.advancing = advancing; }
+
+    public boolean isGameOver() { return gameOver; }
+    public void setGameOver(boolean gameOver) { this.gameOver = gameOver; }
 
     @Override
     public String toString() {

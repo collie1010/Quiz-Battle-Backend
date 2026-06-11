@@ -129,6 +129,7 @@ public class BattleController {
             if (room.getP1() != null && room.getP2() != null) {
                 gameService.initGame(room);
                 startNewRound(room); // ⭐ 修改：開始新回合
+                room.setGameStarted(true); 
             }
         } else {
             messaging.convertAndSend(
@@ -187,12 +188,17 @@ public class BattleController {
 
     @MessageMapping("/answer")
     public void answer(AnswerMessage msg) {
-        // ✅ 改用 getRoom()，房間不存在就直接返回，不建立新房間
         Room room = roomService.getRoom(msg.getRoomId());
 
-        // ✅ 防禦：房間不存在（可能已結束或 roomId 錯誤）
         if (room == null) {
             logger.warn("answer() 忽略：房間不存在 ({})", msg.getRoomId());
+            return;
+        }
+
+        // ⭐ Fast-Fail：利用 volatile 變數在不加鎖的情況下快速攔截無效作答封包
+        // 遊戲未開始、已結束、或正在換題中，都直接丟棄
+        if (!room.isGameStarted() || room.isGameOver() || room.isAdvancing()) {
+            logger.debug("房間 {} 狀態不可作答 (未開始、已結束或換題中)，忽略封包", msg.getRoomId());
             return;
         }
 
@@ -308,6 +314,9 @@ public class BattleController {
     }
 
     private void handleGameOver(Room room) {
+        // ⭐ 標記遊戲徹底結束，後續 answer() 可透過 volatile 快速攔截
+        room.setGameOver(true);
+
         String winnerId = null;
         if (room.getP1().getScore() > room.getP2().getScore()) {
             winnerId = room.getP1().getId();

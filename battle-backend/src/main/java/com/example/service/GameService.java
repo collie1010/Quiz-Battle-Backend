@@ -80,18 +80,27 @@ public class GameService {
             }
 
             if (player == null) return false;
-        
+
             // 1. 檢查是否已作答
             if (player.isAnswered()) return false;
             player.setAnswered(true);
 
-            // ⭐ 修正點 1：改用伺服器當下時間計算耗時 (解決前後端時間不同步問題)
+            // ⭐ 將極致防護移到最前面！確保後續所有的 Log 或邏輯都能安全取用題目
+            if (room.getQuestions() == null || room.getQuestions().isEmpty() ||
+                room.getCurrentIndex() >= room.getQuestions().size() || room.getCurrentIndex() < 0) {
+                logger.warn("房間 {} 收到作答，但題目列表異常或索引越界", room.getRoomId());
+                return false;
+            }
+
             long serverNow = System.currentTimeMillis();
             long elapsed = serverNow - room.getQuestionStartTime();
 
-            // ⭐ 修正點 2：加入 Log 方便除錯 (建議開發階段保留)
+            // 現在這裡取值絕對安全了
+            Question q = room.getQuestions().get(room.getCurrentIndex());
+
+            // 寫 Log 放在防護之後
             logger.debug("玩家回答: {}", msg.getAnswer());
-            logger.debug("正確答案: {}", room.getQuestions().get(room.getCurrentIndex()).getAnswer());
+            logger.debug("正確答案: {}", q.getAnswer());
             logger.debug("耗時(ms): {}", elapsed);
 
             // 判定超時 (8000ms + 緩衝)
@@ -100,16 +109,7 @@ public class GameService {
                 return false;
             }
 
-            // ⭐ 極致防護：確保題目列表存在且索引有效
-            // 雖然理論上 pushQuestion 已經檢查過，但在多執行緒環境下多檢查一次無害
-            if (room.getQuestions() == null || 
-                room.getCurrentIndex() >= room.getQuestions().size()) {
-                return false;
-            }
-
-            Question q = room.getQuestions().get(room.getCurrentIndex());
-
-            // 字串比對邏輯 (你之前改的 trim + ignoreCase)
+            // 字串比對邏輯
             String dbAnswer = q.getAnswer() != null ? q.getAnswer().trim() : "";
             String playerAnswer = msg.getAnswer() != null ? msg.getAnswer().trim() : "";
 
@@ -117,7 +117,7 @@ public class GameService {
                 // 分數計算
                 int score = BASE_SCORE + (int)((TIME_LIMIT_MS - elapsed) / 100);
                 score = Math.max(score, BASE_SCORE);
-                
+
                 player.setScore(player.getScore() + score);
                 logger.info("答對！加分: {}，目前總分: {}", score, player.getScore());
             } else {
@@ -125,7 +125,6 @@ public class GameService {
             }
             return true;
         }
-        
     }
 
     /* 換題 */
