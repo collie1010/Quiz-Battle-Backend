@@ -125,17 +125,27 @@ public class BattleController {
         
         boolean success = roomService.join(room, msg.getPlayerId(), msg.getPlayerName(), sessionId);
 
-        if (success) {
-            if (room.getP1() != null && room.getP2() != null) {
-                gameService.initGame(room);
-                startNewRound(room); // ⭐ 修改：開始新回合
-                room.setGameStarted(true); 
-            }
-        } else {
+        if (!success) {
             messaging.convertAndSend(
                 "/topic/room/" + room.getRoomId(),
                 new ErrorMessage(msg.getPlayerId(), "房間已滿，無法加入！")
             );
+            return;
+        }
+
+        // ⭐ 在鎖內以 setGameStarted(true) 認領唯一開局權，
+        // 避免雙人同時 /join 或重複點擊各跑一次 initGame 導致遊戲重置。
+        boolean shouldStart = false;
+        synchronized (room) {
+            if (room.getP1() != null && room.getP2() != null && !room.isGameStarted()) {
+                room.setGameStarted(true);
+                shouldStart = true;
+            }
+        }
+
+        if (shouldStart) {
+            gameService.initGame(room);
+            startNewRound(room); // ⭐ 開始新回合
         }
     }
 
