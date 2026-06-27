@@ -190,34 +190,43 @@ public class BattleController {
     public void answer(AnswerMessage msg) {
         Room room = roomService.getRoom(msg.getRoomId());
 
-        if (room == null) {
-            logger.warn("answer() 忽略：房間不存在 ({})", msg.getRoomId());
-            return;
-        }
+        if (room == null) return;
 
-        // ⭐ Fast-Fail：利用 volatile 變數在不加鎖的情況下快速攔截無效作答封包
-        // 遊戲未開始、已結束、或正在換題中，都直接丟棄
+        // ⭐ Fast-Fail 依然保留 (無鎖快速攔截)
         if (!room.isGameStarted() || room.isGameOver() || room.isAdvancing()) {
-            logger.debug("房間 {} 狀態不可作答 (未開始、已結束或換題中)，忽略封包", msg.getRoomId());
             return;
         }
 
         room.updateActivity();
 
-        boolean submitted = gameService.submit(room, msg);
-        if (!submitted) {
-            return;
-        }
+        boolean shouldAdvance = false;
 
-        broadcastScore(room);
-
-        // ✅ 將「雙方都答完」的判斷移入 synchronized(room)
-        // 確保不會有兩個執行緒同時觸發 advance()
+        // ⭐ 為了「絕對正確性」，我們將 計分、廣播、換題判斷 綁在同一個鎖內
+        // 確保這三個動作的狀態是一致且連續的
         synchronized (room) {
+            // 1. 計算分數 (GameService.submit 裡面就不需要再加 synchronized 了，因為外面已經鎖了 room)
+            boolean submitted = gameService.submit(room, msg);
+            if (!submitted) {
+                return;
+            }
+
+            // 2. 廣播分數
+            // 此時在 room 鎖內，絕對不會有人改動 currentIndex 或分數，保證絕對正確！
+            broadcastScore(room);
+
+            // 3. 判斷換題 (Leader Election)
             if (room.getP1() != null && room.getP2() != null
                     && room.getP1().isAnswered() && room.getP2().isAnswered()) {
-                advance(room); // advance() 內部也有 synchronized(room)，Java 允許可重入鎖
+                if (!room.isAdvancing()) {
+                    room.setAdvancing(true);
+                    shouldAdvance = true;
+                }
             }
+        } // --- 鎖定範圍結束 ---
+
+        // 4. 將最耗時的「排程與網路廣播新題目」移到鎖外執行 (維持高效能)
+        if (shouldAdvance) {
+            executeAdvance(room);
         }
     }
 
@@ -242,7 +251,8 @@ public class BattleController {
                 if (roomService.getRoom(room.getRoomId()) == null) {
                     return;
                 }
-                advance(room);
+                // ⭐ 改呼叫 timeout 專用的觸發器
+                tryAdvanceFromTimeout(room);
             } catch (Exception e) {
                 logger.error("換題排程執行異常: {}", e.getMessage(), e);
             }
@@ -290,26 +300,37 @@ public class BattleController {
         );
     }
 
-    /* 換題 or 結束 */
-    private void advance(Room room) {
+    /**
+     * 給 Timeout 任務專用的觸發入口
+     */
+    private void tryAdvanceFromTimeout(Room room) {
+        boolean shouldAdvance = false;
         synchronized (room) {
-            if (room.isAdvancing()) return;
-            room.setAdvancing(true);
-
-            // ✅ 移除 try-finally，遊戲結束就永遠保持 advancing = true
-            // 只有「還有下一題」的情況才重置，讓下一題可以繼續
-            if (room.getTimeoutTask() != null) {
-                room.getTimeoutTask().cancel(false);
-                room.setTimeoutTask(null);
+            // 如果時間到，不管有沒有答完，只要還沒在換題，就搶下換題權
+            if (!room.isAdvancing()) {
+                room.setAdvancing(true);
+                shouldAdvance = true;
             }
+        }
+        if (shouldAdvance) {
+            executeAdvance(room);
+        }
+    }
 
-            if (gameService.next(room)) {
-                room.setAdvancing(false); // ✅ 只在換題時重置，讓下一題能進入
-                startNewRound(room);
-            } else {
-                // 遊戲結束：advancing 永遠保持 true，防止任何後續進入
-                handleGameOver(room);
-            }
+    /**
+     * 實際執行換題與廣播 (無鎖操作)
+     */
+    private void executeAdvance(Room room) {
+        if (room.getTimeoutTask() != null) {
+            room.getTimeoutTask().cancel(false);
+            room.setTimeoutTask(null);
+        }
+
+        if (gameService.next(room)) {
+            room.setAdvancing(false); // 解除鎖定，讓下一題可以答
+            startNewRound(room);
+        } else {
+            handleGameOver(room);
         }
     }
 

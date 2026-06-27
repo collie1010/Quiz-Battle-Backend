@@ -101,6 +101,14 @@ public class MatchmakingService {
     }
     
     public void removePlayerBySessionId(String sessionId) {
-        waitingQueue.removeIf(p -> p.sessionId.equals(sessionId));
+        synchronized (this) {
+            waitingQueue.removeIf(p -> {
+                if (p.sessionId.equals(sessionId)) {
+                    queuedPlayerIds.remove(p.id); // 同步清除，避免重連時 id 殘留卡住配對
+                    return true;
+                }
+                return false;
+            });
+        }
     }
 }

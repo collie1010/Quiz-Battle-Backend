@@ -42,89 +42,67 @@ public class GameService {
 
     /* 推送題目前呼叫 */
     public void startQuestion(Room room, Runnable onTimeout) {
-        // ⭐ 防禦性檢查：如果 P2 不見了，不要執行後續動作以免崩潰
         if (room.getP1() == null || room.getP2() == null) {
             return;
         }
-    
+
         room.setQuestionStartTime(System.currentTimeMillis());
         room.getP1().setAnswered(false);
         room.getP2().setAnswered(false);
-    
-        // ⭐ 取消上一題的 timeout (如果有)
+
         if (room.getTimeoutTask() != null) {
             room.getTimeoutTask().cancel(false);
         }
-    
-        // ⭐ 修正後的排程邏輯：使用 TaskScheduler 原生方法 + Instant
-        // 計算預計執行的時間點 (現在時間 + 限制時間)
+
         Instant executionTime = Instant.now().plusMillis(TIME_LIMIT_MS);
-        
-        // 使用 Spring TaskScheduler 進行排程
+
         room.setTimeoutTask(
             scheduler.schedule(onTimeout, executionTime)
         );
-        
-        logger.info("題目已推送，超時任務已排程於: {}", executionTime);
     }
 
-    /* 玩家作答 */
+    /* 玩家作答 (優化版：極小化鎖粒度 + 區域快取防競態) */
     public boolean submit(Room room, AnswerMessage msg) {
 
-        synchronized (room) {
-            Player player = null;
-            if (room.getP1() != null && room.getP1().getId().equals(msg.getPlayerId())) {
-                player = room.getP1();
-            } else if (room.getP2() != null && room.getP2().getId().equals(msg.getPlayerId())) {
-                player = room.getP2();
-            }
+        // ⭐ 1. 快取當前狀態到 Thread Stack，避免被其他執行緒 (如 advance) 覆蓋
+        int currentIndex = room.getCurrentIndex();
+        long startTime = room.getQuestionStartTime();
+        List<Question> questions = room.getQuestions();
 
-            if (player == null) return false;
-
-            // 1. 檢查是否已作答
-            if (player.isAnswered()) return false;
-            player.setAnswered(true);
-
-            // ⭐ 將極致防護移到最前面！確保後續所有的 Log 或邏輯都能安全取用題目
-            if (room.getQuestions() == null || room.getQuestions().isEmpty() ||
-                room.getCurrentIndex() >= room.getQuestions().size() || room.getCurrentIndex() < 0) {
-                logger.warn("房間 {} 收到作答，但題目列表異常或索引越界", room.getRoomId());
-                return false;
-            }
-
-            long serverNow = System.currentTimeMillis();
-            long elapsed = serverNow - room.getQuestionStartTime();
-
-            // 現在這裡取值絕對安全了
-            Question q = room.getQuestions().get(room.getCurrentIndex());
-
-            // 寫 Log 放在防護之後
-            logger.debug("玩家回答: {}", msg.getAnswer());
-            logger.debug("正確答案: {}", q.getAnswer());
-            logger.debug("耗時(ms): {}", elapsed);
-
-            // 判定超時 (8000ms + 緩衝)
-            if (elapsed > TIME_LIMIT_MS + 500) {
-                logger.warn("判定超時，不計分");
-                return false;
-            }
-
-            // 字串比對邏輯
-            String dbAnswer = q.getAnswer() != null ? q.getAnswer().trim() : "";
-            String playerAnswer = msg.getAnswer() != null ? msg.getAnswer().trim() : "";
-
-            if (dbAnswer.equalsIgnoreCase(playerAnswer)) {
-                // 分數計算
-                int score = BASE_SCORE + (int)((TIME_LIMIT_MS - elapsed) / 100);
-                score = Math.max(score, BASE_SCORE);
-
-                player.setScore(player.getScore() + score);
-                logger.info("答對！加分: {}，目前總分: {}", score, player.getScore());
-            } else {
-                logger.info("答錯！");
-            }
-            return true;
+        if (questions == null || questions.isEmpty() || currentIndex >= questions.size() || currentIndex < 0) {
+            return false;
         }
+
+        Player player = null;
+        if (room.getP1() != null && room.getP1().getId().equals(msg.getPlayerId())) {
+            player = room.getP1();
+        } else if (room.getP2() != null && room.getP2().getId().equals(msg.getPlayerId())) {
+            player = room.getP2();
+        }
+
+        if (player == null) return false;
+
+        // ⭐ 2. 已經被外部 synchronized(room) 保護，直接操作即可
+        if (player.isAnswered()) return false;
+        player.setAnswered(true);
+
+        long elapsed = System.currentTimeMillis() - startTime;
+        Question q = questions.get(currentIndex); // 安全取用區域快取的 index
+
+        if (elapsed > TIME_LIMIT_MS + 500) {
+            return false;
+        }
+
+        String dbAnswer = q.getAnswer() != null ? q.getAnswer().trim() : "";
+        String playerAnswer = msg.getAnswer() != null ? msg.getAnswer().trim() : "";
+
+        if (dbAnswer.equalsIgnoreCase(playerAnswer)) {
+            int score = BASE_SCORE + (int)((TIME_LIMIT_MS - elapsed) / 100);
+            score = Math.max(score, BASE_SCORE);
+
+            player.setScore(player.getScore() + score);
+        }
+        return true;
     }
 
     /* 換題 */
