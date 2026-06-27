@@ -74,9 +74,18 @@ public class WebSocketEventListener {
 
                 // 啟動斷線判輸的倒數任務 (3秒後如果沒回來才執行)
                 ScheduledFuture<?> task = taskScheduler.schedule(() -> {
-                    logger.warn("玩家 {} 未在時間內重連，判輸。", playerId);
-
                     disconnectService.cancelTask(playerId);
+
+                    // ⭐ 一次性結算認領：若已結算(正常結束 or 另一方先斷線處理)，直接放棄，
+                    // 避免雙方同時斷線送出兩則矛盾的結算訊息。
+                    synchronized (targetRoom) {
+                        if (targetRoom.isGameOver()) {
+                            return;
+                        }
+                        targetRoom.setGameOver(true);
+                    }
+
+                    logger.warn("玩家 {} 未在時間內重連，判輸。", playerId);
 
                     // 這裡才需要取消遊戲計時器，因為房間都要被銷毀了
                     if (targetRoom.getTimeoutTask() != null) {

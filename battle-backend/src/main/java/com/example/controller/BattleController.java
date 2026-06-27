@@ -345,8 +345,14 @@ public class BattleController {
     }
 
     private void handleGameOver(Room room) {
-        // ⭐ 標記遊戲徹底結束，後續 answer() 可透過 volatile 快速攔截
-        room.setGameOver(true);
+        // ⭐ 標記遊戲徹底結束，後續 answer() 可透過 volatile 快速攔截。
+        // 在鎖內認領，與斷線判輸任務競爭同一把鎖，確保只有一方送出結算。
+        synchronized (room) {
+            if (room.isGameOver()) {
+                return;
+            }
+            room.setGameOver(true);
+        }
 
         String winnerId = null;
         if (room.getP1().getScore() > room.getP2().getScore()) {
