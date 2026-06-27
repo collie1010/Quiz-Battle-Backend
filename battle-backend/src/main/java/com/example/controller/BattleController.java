@@ -253,8 +253,15 @@ public class BattleController {
             logger.error("錯誤：房間 {} 索引越界 ({})", room.getRoomId(), room.getCurrentIndex());
             return;
         }
-        
-        // 啟動倒數計時、重置 startTime
+
+        scheduleTimeout(room);   // 啟動倒數計時、重置 startTime / answered
+        broadcastQuestion(room); // 廣播題目給所有人
+    }
+
+    /**
+     * 抽出共用的逾時排程，供 startNewRound 與 executeAdvance 使用
+     */
+    private void scheduleTimeout(Room room) {
         gameService.startQuestion(room, () -> {
             try {
                 // 再次檢查房間是否存在 (避免已被斷線機制銷毀)
@@ -267,9 +274,6 @@ public class BattleController {
                 logger.error("換題排程執行異常: {}", e.getMessage(), e);
             }
         });
-
-        // 廣播題目給所有人
-        broadcastQuestion(room);
     }
 
     /**
@@ -336,9 +340,17 @@ public class BattleController {
             room.setTimeoutTask(null);
         }
 
-        if (gameService.next(room)) {
-            room.setAdvancing(false); // 解除鎖定，讓下一題可以答
-            startNewRound(room);
+        boolean hasNext;
+        synchronized (room) {
+            hasNext = gameService.next(room); // currentIndex++ 在鎖內，保證跨執行緒可見性
+            if (hasNext) {
+                scheduleTimeout(room);        // 重置 startTime / answered、排新計時
+                room.setAdvancing(false);     // 狀態一致後才開閘，避免誤拒新題最初幾個答案
+            }
+        }
+
+        if (hasNext) {
+            broadcastQuestion(room);          // 網路廣播留在鎖外
         } else {
             handleGameOver(room);
         }
